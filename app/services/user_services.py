@@ -1,54 +1,106 @@
 from fastapi import HTTPException
 from app.db.supabase_client import supabase, supabase_admin
 from app.schemas.user_schema import UserCreate
+
+# from supabase_auth.types import VerifyOtpParams
+
+
+
 def register_user(user: UserCreate):
-    print("Registering user in service:", user.email)
+    print("Registering user in service:", user.first_name, user.last_name, user.age, user.phone_number)
     try:
-        # Create auth user in Supabase
-        auth_response = supabase.auth.sign_up({
+        response = supabase.auth.sign_up({
             "email": user.email,
             "password": user.password,
+            "options": {
+                "data": {
+                    "display_name": user.first_name,
+                    "last_name": user.last_name,
+                    "Age": user.age,
+                    "phone": user.phone_number,
+                }
+            }
         })
-        print("Supabase auth response:", auth_response)
-        if auth_response.user is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Registration failed."
-            )
-
-        user_id = auth_response.user.id
-        return {
-            "message": "User registered successfully",
-            "user": {
-                "id": user_id,
-                "email": user.email,
-              
-            },
-            "access_token": (
-                auth_response.session.access_token
-                if auth_response.session
-                else None
-            ),
-            "refresh_token": (
-                auth_response.session.refresh_token
-                if auth_response.session
-                else None
-            )
-        }
-
-    except HTTPException:
-        raise
-
     except Exception as e:
         error_message = str(e).lower()
 
-        if "already registered" in error_message:
-            raise HTTPException(
-                status_code=409,
-                detail="Email already registered."
-            )
-        print("ERROR:", repr(e))
+        if "already" in error_message:
+                raise HTTPException(status_code=409, detail="Email already exists")
+
+        raise HTTPException(status_code=400, detail="Failed to register user")
+
+    if response.user is None:
+            raise HTTPException(status_code=400, detail="Failed to register user")
+        
+    user_id = response.user.id
+    print("User registered with ID:", user_id)
+
+    supabase_admin.table("profiles").insert({
+            "id": user_id,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "age": user.age,
+            "phone_number": user.phone_number,
+        }).execute()
+    print("User profile created for ID:", user_id)
+
+    return {
+            "status_code": 201,
+            "id": user_id,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "age": user.age,
+            "phone_number": user.phone_number,
+            "access_token": response.session.access_token if response.session else None,
+            "refresh_token": response.session.refresh_token if response.session else None,
+        }
+
+def sign_otp(email: str):
+    try:
+        response = supabase.auth.sign_in_with_otp({
+            "email": email
+        })
+
+        print(response)
+
+        return {
+            "message": "OTP sent successfully"
+        }
+
+    except Exception as e:
+        print(e)
         raise HTTPException(
-                status_code=500,
-                detail=f"Registration failed: {str(e)}"
+            status_code=400,
+            detail="Failed to send OTP"
+        )
+
+
+
+def verify_otp(email: str, token: str):
+    try:
+
+        print(type(supabase.auth))
+        print(type(email))
+        print(type(token))
+        response = supabase.auth.verify_otp({
+            "email": email,
+            "token": token,
+            "type": "email"
+        })
+
+        print(response)
+
+        return {
+            "message": "OTP verified successfully",
+            "access_token": response.session.access_token if response.session else None,
+            "refresh_token": response.session.refresh_token if response.session else None,
+        }
+
+    except Exception as e:
+        print(e)
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to verify OTP"
         )
