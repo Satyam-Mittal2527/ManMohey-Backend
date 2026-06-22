@@ -10,5 +10,11 @@ def get_home_page_hero():
     return {
         "title": "HomePage Hero Picture",
         "description": "Hero Banner for the Home Page",
-        "image_url": f"{BASE_URL}/public/hero_image.webp"
+        "images" : [
+            f"{BASE_URL}/public/hero_image1.png",
+            f"{BASE_URL}/public/hero_image2.png",
+            f"{BASE_URL}/public/hero_image1.png"
+        ]
+        
+        
     }
