@@ -85,7 +85,7 @@ def sign_otp(email: str):
         print(e)
         raise HTTPException(
             status_code=400,
-            detail= str(e.detail)
+            detail= str(e)
         )
 
 
