@@ -8,7 +8,12 @@ app = FastAPI(
     version="1.0.0",
     description="API for ManMohhey application",
 )
-
+@app.middleware("http")
+async def log_origin(request, call_next):
+    print("METHOD:", request.method)
+    print("ORIGIN:", request.headers.get("origin"))
+    response = await call_next(request)
+    return response
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
