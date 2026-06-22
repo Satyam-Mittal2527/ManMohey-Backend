@@ -59,6 +59,18 @@ def register_user(user: UserCreate):
 
 def sign_otp(email: str):
     try:
+        # verify user exists in profiles table before sending OTP
+        try:
+            profiles_resp = supabase_admin.table("profiles").select("id,email").eq("email", email).execute()
+        except Exception as e:
+            print("profiles query error:", e)
+            raise HTTPException(status_code=500, detail="Internal error checking user profile")
+
+        rows = getattr(profiles_resp, "data", None) or profiles_resp.data if hasattr(profiles_resp, "data") else None
+        # supabase client may return dict with 'data' key or an object with .data
+        if not rows or len(rows) == 0:
+            raise HTTPException(status_code=404, detail="User not found. Please register first.")
+
         response = supabase.auth.sign_in_with_otp({
             "email": email
         })
@@ -73,7 +85,7 @@ def sign_otp(email: str):
         print(e)
         raise HTTPException(
             status_code=400,
-            detail="Failed to send OTP"
+            detail= str(e.detail)
         )
 
 
@@ -92,10 +104,20 @@ def verify_otp(email: str, token: str):
 
         print(response)
 
+        user_info = None
+        if getattr(response, "user", None):
+            user = response.user
+            user_info = {
+                "id": getattr(user, "id", None),
+                "email": getattr(user, "email", None),
+                "user_metadata": getattr(user, "user_metadata", None),
+            }
+
         return {
             "message": "OTP verified successfully",
             "access_token": response.session.access_token if response.session else None,
             "refresh_token": response.session.refresh_token if response.session else None,
+            "user": user_info,
         }
 
     except Exception as e:
