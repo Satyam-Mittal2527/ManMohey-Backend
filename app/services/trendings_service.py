@@ -1,12 +1,12 @@
 from app.db.supabase_client import supabase, supabase_admin
 
-def new_arrivals_service():
+def trendings_service():
     try:
         response = (
             supabase_admin
             .table("Collections")
             .select("*")
-            .eq("category", "NewArrivals")
+            .eq("category", "Trendings")
             .execute()
         )
 

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import home_page_routes, user_routes, new_arrivals_routes
+from app.routes import home_page_routes, user_routes, new_arrivals_routes, trendings_routes, bestSeller_routes, get_products_routes
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
@@ -22,3 +22,6 @@ app.mount("/public", StaticFiles(directory="public"), name="public")
 app.include_router(home_page_routes.router)
 app.include_router(user_routes.router)
 app.include_router(new_arrivals_routes.router)
+app.include_router(trendings_routes.router)
+app.include_router(bestSeller_routes.router)
+app.include_router(get_products_routes.router)
