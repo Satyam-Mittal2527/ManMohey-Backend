@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Response, HTTPException
+from fastapi import APIRouter, Depends, Response, HTTPException, Request
 from app.services.user_services import register_user, sign_otp, verify_otp
 from app.schemas.user_schema import UserCreate
-from fastapi import Request
 from app.db.supabase_client import supabase, supabase_admin
+from app.dependencies.auth import get_current_user as require_current_user, get_optional_current_user
 
 router = APIRouter(prefix = "/api/User")
 @router.post("/register")
@@ -61,34 +61,15 @@ async def verifyOtp(request: Request, response: Response):
 
 
 @router.get("/me")
-async def get_current_user(request: Request):
-    access = request.cookies.get("access_token")
-    if not access:
+async def get_current_user_route(current_auth: dict | None = Depends(get_optional_current_user)):
+    if not current_auth:
         return {"user": None}
 
     try:
-        print("/me called; access token present?", bool(access))
-        print("access token (trim):", (access or "").replace('\n','')[:40])
-        # Try common supabase auth methods; adapt if your client differs
-        user = None
-        try:
-            # Newer supabase client
-            user_resp = supabase.auth.get_user(access)
-            user = getattr(user_resp, "user", user_resp)
-        except Exception:
-            try:
-                # Fallback for older client versions
-                user_resp = supabase.auth.api.get_user(access)
-                user = getattr(user_resp, "user", user_resp)
-            except Exception:
-                user = None
-
-        if not user:
-            return {"user": None}
-
-        user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
+        user = current_auth["user"]
+        user_id = current_auth["user_id"]
         print("/me resolved user id:", user_id)
-        # Fetch profile row from 'profiles' table using admin client
+
         profile = None
         try:
             profiles_resp = supabase_admin.table("profiles").select("id, email, first_name, last_name, phone_number").eq("id", user_id).single().execute()
@@ -105,11 +86,7 @@ async def get_current_user(request: Request):
 
 
 @router.post("/change-password")
-async def change_password(request: Request):
-    access = request.cookies.get("access_token")
-    if not access:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
+async def change_password(request: Request, current_auth: dict = Depends(require_current_user)):
     payload = await request.json()
     current_password = payload.get("current_password")
     new_password = payload.get("new_password")
@@ -122,22 +99,12 @@ async def change_password(request: Request):
         raise HTTPException(status_code=400, detail="New password and confirm password do not match")
 
     try:
-        user = None
-        try:
-            user_resp = supabase.auth.get_user(access)
-            user = getattr(user_resp, "user", user_resp)
-        except Exception:
-            try:
-                user_resp = supabase.auth.api.get_user(access)
-                user = getattr(user_resp, "user", user_resp)
-            except Exception:
-                user = None
-
+        user = current_auth["user"]
         if not user:
             raise HTTPException(status_code=401, detail="Invalid authentication")
 
         email = getattr(user, "email", None) or (user.get("email") if isinstance(user, dict) else None)
-        user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
+        user_id = current_auth["user_id"]
 
         if not email or not user_id:
             raise HTTPException(status_code=400, detail="User email or id not available")
@@ -169,30 +136,12 @@ async def change_password(request: Request):
 
 
 @router.put("/profile")
-async def update_profile(request: Request, response: Response):
-    access = request.cookies.get("access_token")
-    if not access:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+async def update_profile(request: Request, response: Response, current_auth: dict = Depends(require_current_user)):
+    user_id = current_auth["user_id"]
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User id not found")
 
     try:
-        user = None
-        try:
-            user_resp = supabase.auth.get_user(access)
-            user = getattr(user_resp, "user", user_resp)
-        except Exception:
-            try:
-                user_resp = supabase.auth.api.get_user(access)
-                user = getattr(user_resp, "user", user_resp)
-            except Exception:
-                user = None
-
-        if not user:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
-        if not user_id:
-            raise HTTPException(status_code=400, detail="User id not found")
-
         payload = await request.json()
         # accept first_name, last_name, email, phone_number
         update_data = {}
@@ -225,16 +174,8 @@ async def update_profile(request: Request, response: Response):
 
 
 @router.post("/reset-password")
-async def reset_password(request: Request):
+async def reset_password(request: Request, current_auth: dict = Depends(require_current_user)):
     payload = await request.json()
-    access = request.cookies.get("access_token") or payload.get("access_token")
-    auth_header = request.headers.get("authorization")
-    if not access and auth_header and auth_header.lower().startswith("bearer "):
-        access = auth_header[7:]
-
-    if not access:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
     new_password = payload.get("new_password")
     confirm_password = payload.get("confirm_password")
 
@@ -245,21 +186,7 @@ async def reset_password(request: Request):
         raise HTTPException(status_code=400, detail="New password and confirm password do not match")
 
     try:
-        user = None
-        try:
-            user_resp = supabase.auth.get_user(access)
-            user = getattr(user_resp, "user", user_resp)
-        except Exception:
-            try:
-                user_resp = supabase.auth.api.get_user(access)
-                user = getattr(user_resp, "user", user_resp)
-            except Exception:
-                user = None
-
-        if not user:
-            raise HTTPException(status_code=401, detail="Invalid authentication")
-
-        user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
+        user_id = current_auth["user_id"]
         if not user_id:
             raise HTTPException(status_code=400, detail="User id not available")
 
