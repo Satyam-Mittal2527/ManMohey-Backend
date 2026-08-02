@@ -208,7 +208,7 @@ async def reset_password(request: Request, current_auth: dict = Depends(require_
 
 @router.post("/logout")
 async def logout():
-    print("Logging out user")
+    # print("Logging out user")
     response = JSONResponse({"message": "Logged out"})
 
     response.delete_cookie(
