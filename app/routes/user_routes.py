@@ -211,12 +211,25 @@ async def logout():
     # print("Logging out user")
     response = JSONResponse({"message": "Logged out"})
 
-    response.delete_cookie(
+    response.set_cookie(
         key="access_token",
+        value="",
+        max_age=0,
+        expires=0,
+        httponly=True,
+        secure=True,
+        samesite="none",
         path="/",
     )
-    response.delete_cookie(
+
+    response.set_cookie(
         key="refresh_token",
+        value="",
+        max_age=0,
+        expires=0,
+        httponly=True,
+        secure=True,
+        samesite="none",
         path="/",
     )
 
