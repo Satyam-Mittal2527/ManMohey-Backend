@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Response, HTTPException, Request
 from app.services.user_services import register_user, sign_otp, verify_otp
 from app.schemas.user_schema import UserCreate
 from app.db.supabase_client import supabase, supabase_admin
+from fastapi.responses import JSONResponse
 from app.dependencies.auth import get_current_user as require_current_user, get_optional_current_user
 
 router = APIRouter(prefix = "/api/User")
@@ -206,16 +207,16 @@ async def reset_password(request: Request, current_auth: dict = Depends(require_
 
 
 @router.post("/logout")
-async def logout(response: Response):
-    # Clear auth cookies on logout
+async def logout():
+    response = JSONResponse({"message": "Logged out"})
+
     response.delete_cookie(
         key="access_token",
         path="/",
-        samesite="none",
     )
     response.delete_cookie(
         key="refresh_token",
         path="/",
-        samesite="none",
     )
-    return {"message": "Logged out"}
+
+    return response
