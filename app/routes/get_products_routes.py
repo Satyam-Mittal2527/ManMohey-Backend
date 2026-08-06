@@ -21,3 +21,13 @@ async def get_product_by_slug(product_slug: str):
     product = getCollectionPage_service.getProductById_service(product_slug)
 
     return {"product": product}
+
+
+@router.get("/{collection_slug}")
+async def get_collection(collection_slug: str):
+
+    products = getCollectionPage_service.getCollectionProducts_service(
+        collection_slug
+    )
+
+    return products
