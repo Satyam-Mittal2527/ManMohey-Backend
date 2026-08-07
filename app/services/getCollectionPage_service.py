@@ -1,4 +1,5 @@
 from app.db.supabase_client import supabase, supabase_admin
+from app.services.filter_service import get_category_filters
 from typing import List
 
 def getCollectionPage_service(category_slug: str):
@@ -48,39 +49,7 @@ def getCollectionPage_service(category_slug: str):
             .eq("active", True)
             .execute()
         )
-        brands = (
-            supabase_admin
-            .table("brand_categories")
-            .select("""
-                brands (
-                    id,
-                    name,
-                    slug,
-                    logo
-                )
-            """)
-            .eq("category_id", category_data["id"])
-            .execute()
-        )
-
-        brand_options = []
-
-        for item in brands.data:
-            brand = item["brands"]
-
-            brand_options.append({
-                "id": brand["id"],
-                "name": brand["name"],
-                "count": 0      # Later replace with actual product count
-            })
-
-        filters = [
-            {
-                "key": "brand",
-                "name": "Brand",
-                "options": brand_options
-            }
-        ]
+    
         
         for product in products.data:
 
@@ -91,7 +60,9 @@ def getCollectionPage_service(category_slug: str):
                     .from_("website-assets")
                     .get_public_url(image["image_url"])
                 )
-
+                
+        filters = get_category_filters(category_data["id"])
+        
         return {
 
             "category": category_data,
@@ -106,7 +77,7 @@ def getCollectionPage_service(category_slug: str):
 
     except Exception as e:
 
-        print(e)
+        print("Error fetching CollectionPage Service:",e)
 
         return None
 
