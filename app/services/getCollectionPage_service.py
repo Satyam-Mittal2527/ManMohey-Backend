@@ -27,7 +27,7 @@ def getCollectionPage_service(category_slug: str):
             .order("display_order")
             .execute()
         )
-        print("New console",children.data)
+
         products = (
             supabase_admin
             .table("products")
@@ -48,7 +48,40 @@ def getCollectionPage_service(category_slug: str):
             .eq("active", True)
             .execute()
         )
+        brands = (
+            supabase_admin
+            .table("brand_categories")
+            .select("""
+                brands (
+                    id,
+                    name,
+                    slug,
+                    logo
+                )
+            """)
+            .eq("category_id", category_data["id"])
+            .execute()
+        )
 
+        brand_options = []
+
+        for item in brands.data:
+            brand = item["brands"]
+
+            brand_options.append({
+                "id": brand["id"],
+                "name": brand["name"],
+                "count": 0      # Later replace with actual product count
+            })
+
+        filters = [
+            {
+                "key": "brand",
+                "name": "Brand",
+                "options": brand_options
+            }
+        ]
+        
         for product in products.data:
 
             for image in product["product_images"]:
@@ -64,6 +97,8 @@ def getCollectionPage_service(category_slug: str):
             "category": category_data,
 
             "childCategories": children.data,
+
+            "filterGroups": filters,
 
             "products": products.data
 
