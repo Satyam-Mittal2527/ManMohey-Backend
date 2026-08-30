@@ -8,6 +8,7 @@ from app.services.order_service import (
     create_order_service,
     get_user_orders_service,
     get_user_order_by_id_service,
+    cancel_order_service
 )
 
 
@@ -112,4 +113,42 @@ async def get_order(
         raise HTTPException(
             status_code=500,
             detail="Failed to fetch order",
+        )
+
+@router.patch("/{order_id}/cancel")
+async def cancel_order(
+    order_id: int,
+    current_user=Depends(get_current_user),
+):
+
+    try:
+
+        result = await cancel_order_service(
+            current_user["access_token"],
+            current_user["user_id"],
+            order_id,
+        )
+
+        return {
+            "success": True,
+            "message": "Order cancelled successfully",
+            "data": result,
+        }
+
+    except ValueError as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
+    except Exception as e:
+
+        print(
+            f"Cancel order error: {e}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to cancel order",
         )

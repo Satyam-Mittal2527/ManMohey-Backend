@@ -9,6 +9,41 @@ from app.db.supabase_client import (
     supabase_admin,
 )
 
+def decrease_product_stock(
+    product_id: int,
+    quantity: int,
+):
+    response = (
+        supabase_admin
+        .rpc(
+            "decrease_product_stock",
+            {
+                "p_product_id": product_id,
+                "p_quantity": quantity,
+            },
+        )
+        .execute()
+    )
+
+    return response.data
+def restore_product_stock(
+    product_id: int,
+    quantity: int,
+):
+    response = (
+        supabase_admin
+        .rpc(
+            "restore_product_stock",
+            {
+                "p_product_id": product_id,
+                "p_quantity": quantity,
+            },
+        )
+        .execute()
+    )
+
+    return response.data
+
 
 def _generate_order_number():
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -285,8 +320,10 @@ async def create_order_service(
     order_id = order["id"]
 
     # ---------------------------------------------------------
-    # 8. Create order items
+    # 8. Create order items and decrease stock
     # ---------------------------------------------------------
+
+    decreased_stock = []
 
     try:
 
@@ -298,6 +335,7 @@ async def create_order_service(
             for item in order_items
         ]
 
+        # Create order items
         items_response = (
             supabase_admin
             .table("order_items")
@@ -310,16 +348,65 @@ async def create_order_service(
                 "Failed to create order items"
             )
 
+        # -----------------------------------------------------
+        # 8.5. Decrease product stock
+        # -----------------------------------------------------
+
+        for item in order_items:
+
+            success = decrease_product_stock(
+                item["product_id"],
+                item["quantity"],
+            )
+
+            if not success:
+                raise ValueError(
+                    f"Insufficient stock for "
+                    f"'{item['product_name']}'"
+                )
+
+            decreased_stock.append(
+                {
+                    "product_id": item["product_id"],
+                    "quantity": item["quantity"],
+                }
+            )
+
     except Exception as error:
 
-        # Roll back order if order items fail
-        supabase_admin.table("orders").delete().eq(
-            "id",
-            order_id
-        ).execute()
+        # -----------------------------------------------------
+        # Restore stock that was already decreased
+        # -----------------------------------------------------
+
+        for item in decreased_stock:
+
+            restore_product_stock(
+                item["product_id"],
+                item["quantity"],
+            )
+
+        # -----------------------------------------------------
+        # Delete order items
+        # -----------------------------------------------------
+
+        supabase_admin \
+            .table("order_items") \
+            .delete() \
+            .eq("order_id", order_id) \
+            .execute()
+
+        # -----------------------------------------------------
+        # Delete order
+        # -----------------------------------------------------
+
+        supabase_admin \
+            .table("orders") \
+            .delete() \
+            .eq("id", order_id) \
+            .execute()
 
         raise ValueError(
-            f"Failed to create order items: {error}"
+            f"Failed to create order: {error}"
         )
 
     # ---------------------------------------------------------
@@ -408,3 +495,68 @@ async def get_user_order_by_id_service(
     order["items"] = items_response.data or []
 
     return order
+
+async def cancel_order_service(
+    token: str,
+    user_id: str,
+    order_id: int,
+):
+    
+    # client = get_user_client(token)
+
+    # ---------------------------------------------------------
+    # 1. Find order belonging to authenticated user
+    # ---------------------------------------------------------
+
+    order_response = (
+        supabase_admin.table("orders")
+        .select(
+            """
+            id,
+            order_number,
+            status,
+            payment_status
+            """
+        )
+        .eq("id", order_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    print(order_response)
+    if not order_response.data:
+        raise ValueError("Order not found")
+
+    order = order_response.data[0]
+
+    # ---------------------------------------------------------
+    # 2. Check whether order can be cancelled
+    # ---------------------------------------------------------
+
+    if order["status"] != "PENDING":
+        raise ValueError(
+            f"Order cannot be cancelled because its current "
+            f"status is {order['status']}"
+        )
+
+    # ---------------------------------------------------------
+    # 3. Cancel order
+    # ---------------------------------------------------------
+
+    update_response = (
+        supabase_admin
+        .table("orders")
+        .update({
+            "status": "CANCELLED"
+        })
+        .eq("id", order_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    if not update_response.data:
+        raise ValueError(
+            "Failed to cancel order"
+        )
+
+    return update_response.data[0]
