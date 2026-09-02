@@ -30,6 +30,7 @@ async def create_order(
             current_user["access_token"],
             current_user["user_id"],
             payload.address_id,
+            payload.payment_method
         )
 
         return {

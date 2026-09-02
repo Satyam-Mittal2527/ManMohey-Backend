@@ -7,7 +7,7 @@ class Settings:
     SUPABASE_URL: str = os.getenv("SUPABASE_URL")
     SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY")
     SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    print(SUPABASE_URL)
-    print(SUPABASE_ANON_KEY[:20])
+    RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_TEST_API_KEY")
+    RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_TEST_SECRET_KEY")
 
 settings = Settings()

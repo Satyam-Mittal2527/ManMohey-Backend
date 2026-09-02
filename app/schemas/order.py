@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class OrderCreate(BaseModel):
     address_id: str
+    payment_method: str
 
 
 class OrderItemResponse(BaseModel):

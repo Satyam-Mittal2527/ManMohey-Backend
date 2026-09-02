@@ -84,6 +84,10 @@ def getCollectionPage_service(category_slug: str):
 def getProductById_service(product_slug: str):
     try:
 
+        # ---------------------------------------------------------
+        # 1. Get product
+        # ---------------------------------------------------------
+
         response = (
             supabase_admin
             .table("products")
@@ -111,15 +115,45 @@ def getProductById_service(product_slug: str):
 
         product = response.data
 
-        # Generate public URLs
-        for image in product["product_images"]:
+        # ---------------------------------------------------------
+        # 2. Generate public image URLs
+        # ---------------------------------------------------------
+
+        for image in product.get("product_images", []):
+
             image["public_url"] = (
                 supabase.storage
                 .from_("website-assets")
                 .get_public_url(image["image_url"])
             )
 
-        # Related products
+        # ---------------------------------------------------------
+        # 3. Get product variants
+        # ---------------------------------------------------------
+
+        variants_response = (
+            supabase_admin
+            .table("product_variants")
+            .select("""
+                id,
+                product_id,
+                sku,
+                size,
+                color,
+                stock,
+                price
+            """)
+            .eq("product_id", product["id"])
+            .order("id")
+            .execute()
+        )
+
+        product["variants"] = variants_response.data or []
+
+        # ---------------------------------------------------------
+        # 4. Related products
+        # ---------------------------------------------------------
+
         related = (
             supabase_admin
             .table("products")
@@ -140,7 +174,8 @@ def getProductById_service(product_slug: str):
 
         for item in related.data:
 
-            for image in item["product_images"]:
+            for image in item.get("product_images", []):
+
                 image["public_url"] = (
                     supabase.storage
                     .from_("website-assets")
@@ -149,10 +184,18 @@ def getProductById_service(product_slug: str):
 
         product["RelatedProducts"] = related.data
 
+        # ---------------------------------------------------------
+        # 5. Return product
+        # ---------------------------------------------------------
+
         return product
 
     except Exception as e:
-        print(f"Exception in getProductById_service: {e}")
+
+        print(
+            f"Exception in getProductById_service: {e}"
+        )
+
         return None
 
 def getCollectionProducts_service(collection_slug: str):
