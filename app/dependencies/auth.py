@@ -36,6 +36,12 @@ def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ):
+    print("\n========== AUTH DEBUG ==========")
+    print("Request URL:", request.url)
+    print("Request headers:", dict(request.headers))
+    print("Request cookies:", request.cookies)
+    print("Bearer credentials:", credentials)
+    print("================================\n")
     token = credentials.credentials if credentials else request.cookies.get("access_token")
 
     if not token:
