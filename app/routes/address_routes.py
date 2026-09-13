@@ -20,7 +20,7 @@ from app.services.address_service import (
 router = APIRouter(prefix="/api/addresses")
 
 
-@router.get("/")
+@router.get("")
 async def getAddresses(
     current_user=Depends(get_current_user)
 ):
