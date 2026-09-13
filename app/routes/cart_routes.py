@@ -27,7 +27,7 @@ async def addToCart(
         payload
     )
 
-@router.get("/")
+@router.get("")
 async def get_cart(
     current_user=Depends(get_current_user)
 ):
