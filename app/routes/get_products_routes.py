@@ -6,6 +6,15 @@ router = APIRouter(prefix="/api/Products")
 
 BASE_URL = os.getenv("BASE_URL")
 
+@router.get("/search")
+async def search_products(q: str = ""):
+    search_term = q.strip()
+    if not search_term:
+        return {"products": []}
+
+    products = getCollectionPage_service.search_products_service(search_term)
+    return {"products": products or []}
+
 @router.get("/{collection_name}")
 async def get_products(collection_name: str):
     print(collection_name)  # e.g. "New Arrivals"

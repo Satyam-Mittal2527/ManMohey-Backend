@@ -14,17 +14,20 @@ razorpay_client = razorpay.Client(
 def create_razorpay_order(
     amount: float,
     receipt: str
-):
-    amount_in_paise = int(round(amount * 100))
+):  
+    try:
+        amount_in_paise = int(round(amount * 100))
+        
+        razorpay_order = razorpay_client.order.create({
+            "amount": amount_in_paise,
+            "currency": "INR",
+            "receipt": receipt,
+        })
 
-    razorpay_order = razorpay_client.order.create({
-        "amount": amount_in_paise,
-        "currency": "INR",
-        "receipt": receipt,
-    })
-
-    return razorpay_order
-
+        return razorpay_order
+    except Exception as e:
+        print(str(e))
+        return 0
 
 def verify_razorpay_payment(
     razorpay_order_id: str,

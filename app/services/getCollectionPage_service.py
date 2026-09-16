@@ -81,6 +81,44 @@ def getCollectionPage_service(category_slug: str):
 
         return None
 
+def search_products_service(search_term: str):
+    try:
+        products = (
+            supabase_admin
+            .table("products")
+            .select("""
+                *,
+                categories!products_category_id_fkey(
+                    id,
+                    name,
+                    slug
+                ),
+                product_images(
+                    id,
+                    image_url,
+                    display_order
+                )
+            """)
+            .ilike("name", f"%{search_term}%")
+            .eq("active", True)
+            .order("name")
+            .limit(48)
+            .execute()
+        )
+
+        for product in products.data or []:
+            for image in product.get("product_images", []):
+                image["public_url"] = (
+                    supabase.storage
+                    .from_("website-assets")
+                    .get_public_url(image["image_url"])
+                )
+
+        return products.data or []
+    except Exception as e:
+        print("Error searching products:", e)
+        return None
+
 def getProductById_service(product_slug: str):
     try:
 
