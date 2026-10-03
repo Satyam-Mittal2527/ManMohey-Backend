@@ -10,7 +10,7 @@ router = APIRouter(
 
 @router.get("/{collection_slug}")
 async def get_collection(collection_slug: str):
-
+    print("Getting Collection for:", collection_slug)
     products = getCollectionPage_service.getCollectionProducts_service(
         collection_slug
     )

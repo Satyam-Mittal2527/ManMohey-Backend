@@ -17,7 +17,7 @@ async def search_products(q: str = ""):
 
 @router.get("/{collection_name}")
 async def get_products(collection_name: str):
-    print(collection_name)  # e.g. "New Arrivals"
+    print(f"Reaching hereCollection Name: {collection_name}")  # e.g. "New Arrivals"
 
     products = getCollectionPage_service.getCollectionPage_service(collection_name)
     return {"products": products}
