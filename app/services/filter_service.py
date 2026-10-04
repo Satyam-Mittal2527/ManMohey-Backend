@@ -34,7 +34,7 @@ def parse_selected_filter_values(query_params) -> dict[str, list[int]]:
         return selected
 
     for key, value in query_params.items():
-        if key in {"category", "category_id", "child_category", "min_price", "max_price", "availability", "q"}:
+        if key in {"category", "category_id", "child_category", "min_price", "max_price", "availability", "q", "page", "limit"}:
             continue
         parsed = parse_int_list(value)
         if parsed:
@@ -109,15 +109,25 @@ def get_matching_product_ids(selected_filters: dict[str, list[int]]) -> set[int]
         if not normalized:
             continue
 
-        response = (
-            supabase_admin
-            .table("product_filter_values")
-            .select("product_id")
-            .in_("filter_option_id", normalized)
-            .execute()
-        )
+        product_ids = set()
+        offset = 0
+        batch_size = 1000
+        while True:
+            response = (
+                supabase_admin
+                .table("product_filter_values")
+                .select("product_id")
+                .in_("filter_option_id", normalized)
+                .order("product_id")
+                .range(offset, offset + batch_size - 1)
+                .execute()
+            )
+            rows = response.data or []
+            product_ids.update(int(row["product_id"]) for row in rows)
+            if len(rows) < batch_size:
+                break
+            offset += batch_size
 
-        product_ids = {int(row["product_id"]) for row in (response.data or [])}
         if not product_ids:
             return set()
         product_sets.append(product_ids)

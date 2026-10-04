@@ -1,4 +1,4 @@
-from collections import defaultdict
+import math
 
 from app.db.supabase_client import supabase, supabase_admin
 from app.services.filter_service import (
@@ -9,24 +9,82 @@ from app.services.filter_service import (
 )
 
 
-def _price_for_product(product):
-    if product.get("sale_price") is not None:
-        return float(product.get("sale_price"))
-    if product.get("price") is not None:
-        return float(product.get("price"))
-    return None
+def _apply_price_filters(query, min_price, max_price):
+    """Filter using sale price when present, otherwise regular price."""
+    bounds = []
+    if min_price is not None:
+        bounds.append(f"gte.{float(min_price)}")
+    if max_price is not None:
+        bounds.append(f"lte.{float(max_price)}")
+
+    if bounds:
+        sale_bounds = ",".join(f"sale_price.{bound}" for bound in bounds)
+        regular_bounds = ",".join(f"price.{bound}" for bound in bounds)
+        query = query.or_(
+            f"and({sale_bounds}),and(sale_price.is.null,{regular_bounds}),"
+            "and(sale_price.is.null,price.is.null)"
+        )
+
+    return query
 
 
-def _has_inventory(product, variant_stock_map):
-    product_stock = product.get("stock")
-    if product_stock is not None and int(product_stock) > 0:
-        return True
+def _apply_listing_filters(query, valid_ids, parsed_filters, matching_product_ids, min_price, max_price):
+    query = query.eq("active", True).in_("category_id", valid_ids)
+    if parsed_filters:
+        query = query.in_("id", sorted(matching_product_ids))
+    return _apply_price_filters(query, min_price, max_price)
 
-    product_id = product.get("id")
-    if product_id in variant_stock_map and variant_stock_map[product_id] > 0:
-        return True
 
-    return False
+def _get_availability_product_ids(valid_ids, parsed_filters, matching_product_ids, min_price, max_price):
+    """Resolve inventory filters against IDs before the paginated product query."""
+    candidates = []
+    offset = 0
+    batch_size = 1000
+
+    while True:
+        query = supabase_admin.table("products").select("id, stock")
+        query = _apply_listing_filters(
+            query,
+            valid_ids,
+            parsed_filters,
+            matching_product_ids,
+            min_price,
+            max_price,
+        )
+        response = query.order("id").range(offset, offset + batch_size - 1).execute()
+        rows = response.data or []
+        candidates.extend(rows)
+        if len(rows) < batch_size:
+            break
+        offset += batch_size
+
+    candidate_ids = [int(product["id"]) for product in candidates]
+    variant_stock_ids = set()
+    for start in range(0, len(candidate_ids), 500):
+        variant_offset = 0
+        while True:
+            variants = (
+                supabase_admin
+                .table("product_variants")
+                .select("product_id")
+                .in_("product_id", candidate_ids[start:start + 500])
+                .gt("stock", 0)
+                .order("product_id")
+                .range(variant_offset, variant_offset + 999)
+                .execute()
+            )
+            rows = variants.data or []
+            variant_stock_ids.update(int(row["product_id"]) for row in rows)
+            if len(rows) < 1000:
+                break
+            variant_offset += 1000
+
+    in_stock_ids = {
+        int(product["id"])
+        for product in candidates
+        if int(product.get("stock") or 0) > 0 or int(product["id"]) in variant_stock_ids
+    }
+    return set(candidate_ids), in_stock_ids
 
 
 def getCollectionPage_service(
@@ -36,6 +94,8 @@ def getCollectionPage_service(
     min_price: float | None = None,
     max_price: float | None = None,
     availability: str | None = None,
+    page: int = 1,
+    limit: int = 20,
 ):
     try:
         category = (
@@ -96,67 +156,70 @@ def getCollectionPage_service(
         if not valid_ids:
             valid_ids = [category_data["id"]]
 
-        products_response = (
-            supabase_admin
-            .table("products")
-            .select("""
-                *,
-                categories!products_category_id_fkey(
-                    id,
-                    name,
-                    slug
-                ),
-                product_images(
-                    id,
-                    image_url,
-                    display_order
+        page = max(1, int(page))
+        limit = min(100, max(1, int(limit)))
+        offset = (page - 1) * limit
+        parsed_filters = selected_filters or {}
+        matching_product_ids = get_matching_product_ids(parsed_filters) if parsed_filters else set()
+
+        availability_ids = None
+        if availability is not None:
+            if parsed_filters and not matching_product_ids:
+                availability_ids = set()
+            else:
+                candidate_ids, in_stock_ids = _get_availability_product_ids(
+                    valid_ids,
+                    parsed_filters,
+                    matching_product_ids,
+                    min_price,
+                    max_price,
                 )
-            """)
-            .eq("active", True)
-            .in_("category_id", valid_ids)
-            .execute()
-        )
+                if availability == "in_stock":
+                    availability_ids = in_stock_ids
+                elif availability == "out_of_stock":
+                    availability_ids = candidate_ids - in_stock_ids
 
-        raw_products = products_response.data or []
-
-        product_ids = [product["id"] for product in raw_products]
-        variant_map: dict[int, bool] = {}
-        if product_ids:
-            variants_response = (
+        if (parsed_filters and not matching_product_ids) or availability_ids == set():
+            raw_products = []
+            total = 0
+        else:
+            products_query = (
                 supabase_admin
-                .table("product_variants")
-                .select("product_id, stock")
-                .in_("product_id", product_ids)
+                .table("products")
+                .select("""
+                    *,
+                    categories!products_category_id_fkey(
+                        id,
+                        name,
+                        slug
+                    ),
+                    product_images(
+                        id,
+                        image_url,
+                        display_order
+                    )
+                """, count="exact")
+            )
+            products_query = _apply_listing_filters(
+                products_query,
+                valid_ids,
+                parsed_filters,
+                matching_product_ids,
+                min_price,
+                max_price,
+            )
+            if availability_ids is not None:
+                products_query = products_query.in_("id", sorted(availability_ids))
+            products_response = (
+                products_query
+                .order("id", desc=True)
+                .range(offset, offset + limit - 1)
                 .execute()
             )
-            for row in variants_response.data or []:
-                product_id = row["product_id"]
-                variant_map[product_id] = (variant_map.get(product_id, False) or (int(row.get("stock") or 0) > 0))
+            raw_products = products_response.data or []
+            total = products_response.count or 0
 
-        parsed_filters = selected_filters or {}
-        matching_product_ids = set()
-        if parsed_filters:
-            matching_product_ids = get_matching_product_ids(parsed_filters)
-
-        filtered_products = []
         for product in raw_products:
-            product_id = product["id"]
-            if parsed_filters and product_id not in matching_product_ids:
-                continue
-
-            effective_price = _price_for_product(product)
-            if min_price is not None and effective_price is not None and effective_price < float(min_price):
-                continue
-            if max_price is not None and effective_price is not None and effective_price > float(max_price):
-                continue
-
-            if availability is not None:
-                is_in_stock = _has_inventory(product, variant_map)
-                if availability == "in_stock" and not is_in_stock:
-                    continue
-                if availability == "out_of_stock" and is_in_stock:
-                    continue
-
             for image in product.get("product_images", []):
                 image["public_url"] = (
                     supabase.storage
@@ -164,15 +227,21 @@ def getCollectionPage_service(
                     .get_public_url(image["image_url"])
                 )
 
-            filtered_products.append(product)
-
         filters = get_category_filters(category_data["id"])
+        total_pages = (total + limit - 1) // limit
 
         return {
             "category": category_data,
             "childCategories": child_categories,
             "filterGroups": filters,
-            "products": filtered_products,
+            "products": raw_products,
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "totalPages": total_pages,
+                "hasNextPage": page < total_pages,
+            },
         }
 
     except Exception as e:
@@ -186,15 +255,19 @@ def build_collection_page_filters(request_query_params) -> dict:
 
     min_price = None
     max_price = None
-    if request_query_params.get("min_price"):
+    if request_query_params.get("min_price") is not None:
         try:
             min_price = float(request_query_params.get("min_price"))
+            if not math.isfinite(min_price):
+                min_price = None
         except ValueError:
             min_price = None
 
-    if request_query_params.get("max_price"):
+    if request_query_params.get("max_price") is not None:
         try:
             max_price = float(request_query_params.get("max_price"))
+            if not math.isfinite(max_price):
+                max_price = None
         except ValueError:
             max_price = None
 
@@ -210,8 +283,11 @@ def build_collection_page_filters(request_query_params) -> dict:
         "availability": availability,
     }
 
-def search_products_service(search_term: str):
+def search_products_service(search_term: str, page: int = 1, limit: int = 20):
     try:
+        page = max(1, int(page))
+        limit = min(100, max(1, int(limit)))
+        offset = (page - 1) * limit
         products = (
             supabase_admin
             .table("products")
@@ -227,11 +303,12 @@ def search_products_service(search_term: str):
                     image_url,
                     display_order
                 )
-            """)
+            """, count="exact")
             .ilike("name", f"%{search_term}%")
             .eq("active", True)
             .order("name")
-            .limit(48)
+            .order("id")
+            .range(offset, offset + limit - 1)
             .execute()
         )
 
@@ -243,7 +320,18 @@ def search_products_service(search_term: str):
                     .get_public_url(image["image_url"])
                 )
 
-        return products.data or []
+        total = products.count or 0
+        total_pages = (total + limit - 1) // limit
+        return {
+            "products": products.data or [],
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "totalPages": total_pages,
+                "hasNextPage": page < total_pages,
+            },
+        }
     except Exception as e:
         print("Error searching products:", e)
         return None
@@ -365,7 +453,7 @@ def getProductById_service(product_slug: str):
 
         return None
 
-def getCollectionProducts_service(collection_slug: str):
+def getCollectionProducts_service(collection_slug: str, page: int = 1, limit: int = 20):
 
     try:
 
@@ -384,11 +472,16 @@ def getCollectionProducts_service(collection_slug: str):
 
         collection_data = collection.data
 
+        page = max(1, int(page))
+        limit = min(100, max(1, int(limit)))
+        offset = (page - 1) * limit
+
         products = (
             supabase_admin
             .table("collection_products")
             .select("""
                 display_order,
+            product_id,
 
                 products(
                     id,
@@ -411,19 +504,23 @@ def getCollectionProducts_service(collection_slug: str):
                         display_order
                     )
                 )
-            """)
+            """, count="exact")
             .eq("collection_id", collection_data["id"])
             .order("display_order")
+            .order("product_id")
+            .range(offset, offset + limit - 1)
             .execute()
         )
 
         formatted_products = []
 
-        for item in products.data:
+        for item in products.data or []:
 
             product = item["products"]
+            if not product:
+                continue
 
-            for image in product["product_images"]:
+            for image in product.get("product_images", []):
 
                 image["public_url"] = (
                     supabase.storage
@@ -435,7 +532,14 @@ def getCollectionProducts_service(collection_slug: str):
 
         return {
             "collection": collection_data,
-            "products": formatted_products
+            "products": formatted_products,
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": products.count or 0,
+                "totalPages": ((products.count or 0) + limit - 1) // limit,
+                "hasNextPage": page < ((products.count or 0) + limit - 1) // limit,
+            },
         }
 
     except Exception as e:

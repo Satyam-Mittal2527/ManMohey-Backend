@@ -21,6 +21,12 @@ def test_parse_selected_filter_values_handles_csv_and_repeated_params():
     }
 
 
+def test_parse_selected_filter_values_ignores_pagination_parameters():
+    result = parse_selected_filter_values({"page": "2", "limit": "20", "fabric": "5"})
+
+    assert result == {"fabric": [5]}
+
+
 def test_get_matching_product_ids_uses_or_within_group_and_and_across_groups(monkeypatch):
     class FakeResponse:
         def __init__(self, rows):
@@ -37,6 +43,12 @@ def test_get_matching_product_ids_uses_or_within_group_and_and_across_groups(mon
         def in_(self, column, values):
             normalized = tuple(sorted(values))
             self.calls.append((column, normalized))
+            return self
+
+        def order(self, _column):
+            return self
+
+        def range(self, _start, _end):
             return self
 
         def execute(self):
