@@ -1,9 +1,13 @@
 import os
 import re
-import html
-import requests
 from dotenv import load_dotenv
 from supabase import create_client
+from PIL import Image, ImageDraw, ImageFont
+
+
+# ============================================================
+# ENVIRONMENT
+# ============================================================
 
 load_dotenv()
 
@@ -20,198 +24,417 @@ supabase = create_client(
     SUPABASE_SERVICE_ROLE_KEY
 )
 
-BUCKET = "website-assets"
+BUCKET = "review-images"
 
 
-def slugify(text):
-    return re.sub(
-        r"[^a-z0-9]+",
-        "-",
-        text.lower()
-    ).strip("-")
-
-
-def escape(text):
-    return html.escape(text)
-
-
-def create_svg(product_name, category_name):
-    """
-    Creates a simple demo fashion-product illustration.
-    """
-
-    name = escape(product_name)
-    category = escape(category_name)
-
-    svg = f"""<svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="600"
-        height="750"
-        viewBox="0 0 600 750">
-
-        <rect width="600" height="750" fill="#f8f5f0"/>
-
-        <!-- Header -->
-        <text
-            x="300"
-            y="55"
-            text-anchor="middle"
-            font-family="Arial, sans-serif"
-            font-size="22"
-            font-weight="bold"
-            fill="#333">
-            MANMOHEY
-        </text>
-
-        <!-- Product area -->
-        <rect
-            x="100"
-            y="100"
-            width="400"
-            height="500"
-            rx="20"
-            fill="#eee7df"/>
-
-        <!-- Fashion illustration -->
-        <circle
-            cx="300"
-            cy="205"
-            r="45"
-            fill="#d9b39b"/>
-
-        <path
-            d="M235 270
-               Q300 235 365 270
-               L405 470
-               Q300 535 195 470
-               Z"
-            fill="#7c3f58"/>
-
-        <path
-            d="M235 285
-               L185 370
-               L220 390
-               L270 325
-               Z"
-            fill="#7c3f58"/>
-
-        <path
-            d="M365 285
-               L415 370
-               L380 390
-               L330 325
-               Z"
-            fill="#7c3f58"/>
-
-        <!-- Product category -->
-        <text
-            x="300"
-            y="555"
-            text-anchor="middle"
-            font-family="Arial, sans-serif"
-            font-size="18"
-            fill="#666">
-            {category}
-        </text>
-
-        <!-- Product name -->
-        <text
-            x="300"
-            y="640"
-            text-anchor="middle"
-            font-family="Arial, sans-serif"
-            font-size="20"
-            font-weight="bold"
-            fill="#222">
-            {name[:38]}
-        </text>
-
-        <text
-            x="300"
-            y="690"
-            text-anchor="middle"
-            font-family="Arial, sans-serif"
-            font-size="15"
-            fill="#888">
-            Demo Product
-        </text>
-
-    </svg>"""
-
-    return svg
-
+# ============================================================
+# HELPERS
+# ============================================================
 
 def get_public_url(path):
+
     return (
         f"{SUPABASE_URL}/storage/v1/object/public/"
         f"{BUCKET}/{path}"
     )
 
 
+def load_font(size, bold=False):
+
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        if bold
+        else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+
+        "/usr/share/fonts/truetype/liberation2/"
+        "LiberationSans-Bold.ttf"
+        if bold
+        else "/usr/share/fonts/truetype/liberation2/"
+        "LiberationSans-Regular.ttf",
+    ]
+
+    for path in font_paths:
+
+        if os.path.exists(path):
+
+            return ImageFont.truetype(
+                path,
+                size
+            )
+
+    return ImageFont.load_default()
+
+
+def draw_centered_text(
+    draw,
+    text,
+    y,
+    font,
+    fill
+):
+
+    bbox = draw.textbbox(
+        (0, 0),
+        text,
+        font=font
+    )
+
+    width = bbox[2] - bbox[0]
+
+    x = (
+        600 - width
+    ) // 2
+
+    draw.text(
+        (x, y),
+        text,
+        font=font,
+        fill=fill
+    )
+
+
+# ============================================================
+# CREATE PLACEHOLDER PNG
+# ============================================================
+
+def create_review_image(
+    product_name,
+    rating,
+    review_number
+):
+
+    image = Image.new(
+        "RGB",
+        (600, 750),
+        "#f8f5f0"
+    )
+
+    draw = ImageDraw.Draw(
+        image
+    )
+
+    # --------------------------------------------------------
+    # Fonts
+    # --------------------------------------------------------
+
+    font_header = load_font(
+        26,
+        bold=True
+    )
+
+    font_product = load_font(
+        20,
+        bold=True
+    )
+
+    font_label = load_font(
+        18
+    )
+
+    font_rating = load_font(
+        28
+    )
+
+    font_small = load_font(
+        14
+    )
+
+    # --------------------------------------------------------
+    # Header
+    # --------------------------------------------------------
+
+    draw_centered_text(
+        draw,
+        "MANMOHEY",
+        30,
+        font_header,
+        "#333333"
+    )
+
+    # --------------------------------------------------------
+    # Main image area
+    # --------------------------------------------------------
+
+    draw.rounded_rectangle(
+        (70, 90, 530, 570),
+        radius=25,
+        fill="#eee7df"
+    )
+
+    # --------------------------------------------------------
+    # Head
+    # --------------------------------------------------------
+
+    draw.ellipse(
+        (255, 140, 345, 230),
+        fill="#d9b39b"
+    )
+
+    # --------------------------------------------------------
+    # Body / clothing
+    # --------------------------------------------------------
+
+    draw.polygon(
+        [
+            (235, 245),
+            (365, 245),
+            (420, 500),
+            (300, 550),
+            (180, 500)
+        ],
+        fill="#7c3f58"
+    )
+
+    # --------------------------------------------------------
+    # Left arm
+    # --------------------------------------------------------
+
+    draw.polygon(
+        [
+            (235, 255),
+            (165, 390),
+            (200, 410),
+            (270, 320)
+        ],
+        fill="#7c3f58"
+    )
+
+    # --------------------------------------------------------
+    # Right arm
+    # --------------------------------------------------------
+
+    draw.polygon(
+        [
+            (365, 255),
+            (435, 390),
+            (400, 410),
+            (330, 320)
+        ],
+        fill="#7c3f58"
+    )
+
+    # --------------------------------------------------------
+    # Decorative pattern
+    # --------------------------------------------------------
+
+    pattern_color = "#d8b06a"
+
+    for x, y in [
+        (260, 350),
+        (300, 380),
+        (340, 350),
+        (280, 420),
+        (320, 420),
+    ]:
+
+        draw.ellipse(
+            (
+                x - 7,
+                y - 7,
+                x + 7,
+                y + 7
+            ),
+            fill=pattern_color
+        )
+
+    # --------------------------------------------------------
+    # Customer Review
+    # --------------------------------------------------------
+
+    draw_centered_text(
+        draw,
+        "Customer Review",
+        595,
+        font_label,
+        "#666666"
+    )
+
+    # --------------------------------------------------------
+    # Product name
+    # --------------------------------------------------------
+
+    product_text = product_name[:38]
+
+    draw_centered_text(
+        draw,
+        product_text,
+        630,
+        font_product,
+        "#222222"
+    )
+
+    # --------------------------------------------------------
+    # Rating
+    # --------------------------------------------------------
+
+    stars = (
+        "★" * rating
+        +
+        "☆" * (5 - rating)
+    )
+
+    draw_centered_text(
+        draw,
+        stars,
+        675,
+        font_rating,
+        "#d8a23c"
+    )
+
+    # --------------------------------------------------------
+    # Demo label
+    # --------------------------------------------------------
+
+    draw_centered_text(
+        draw,
+        f"Demo Review #{review_number}",
+        715,
+        font_small,
+        "#999999"
+    )
+
+    # --------------------------------------------------------
+    # Convert to PNG bytes
+    # --------------------------------------------------------
+
+    from io import BytesIO
+
+    buffer = BytesIO()
+
+    image.save(
+        buffer,
+        format="PNG"
+    )
+
+    return buffer.getvalue()
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
 def main():
 
-    print("Fetching products...")
+    print("Fetching reviews...")
+
+    # --------------------------------------------------------
+    # Fetch reviews with product information
+    # --------------------------------------------------------
 
     response = (
         supabase
-        .table("products")
+        .table("reviews")
         .select("""
             id,
-            name,
-            slug,
-            category_id,
-            categories(
+            product_id,
+            user_id,
+            rating,
+            comment,
+            products(
                 id,
                 name,
                 slug
             )
         """)
-        .eq("active", True)
+        .order(
+            "created_at",
+            desc=False
+        )
         .execute()
     )
 
-    products = response.data or []
+    reviews = response.data or []
 
-    print(f"Found {len(products)} active products")
+    print(
+        f"Found {len(reviews)} reviews"
+    )
+
+    if not reviews:
+
+        print(
+            "No reviews found."
+        )
+
+        return
 
     success = 0
 
-    for product in products:
+    # ========================================================
+    # PROCESS EACH REVIEW
+    # ========================================================
 
-        product_id = product["id"]
-        product_name = product["name"]
-        slug = product["slug"]
+    for index, review in enumerate(
+        reviews,
+        start=1
+    ):
 
-        category = product.get("categories") or {}
+        review_id = review["id"]
+        user_id = review["user_id"]
+        product_id = review["product_id"]
+        rating = review["rating"]
 
-        category_name = category.get(
+        product = review.get(
+            "products"
+        ) or {}
+
+        product_name = product.get(
             "name",
-            "Fashion"
+            f"Product {product_id}"
         )
 
-        filename = f"{slug}.svg"
-
-        storage_path = f"products/{filename}"
+        print("\n================================")
 
         print(
-            f"\n[{success + 1}/{len(products)}] "
-            f"{product_name}"
+            f"[{index}/{len(reviews)}] Review"
         )
 
-        # ----------------------------------------
-        # Create SVG
-        # ----------------------------------------
-
-        svg_content = create_svg(
-            product_name,
-            category_name
+        print(
+            f"Product ID : {product_id}"
         )
 
-        svg_bytes = svg_content.encode("utf-8")
+        print(
+            f"Product    : {product_name}"
+        )
 
-        # ----------------------------------------
+        print(
+            f"Review ID  : {review_id}"
+        )
+
+        print(
+            f"User ID    : {user_id}"
+        )
+
+        print(
+            f"Rating     : {rating}"
+        )
+
+        # ----------------------------------------------------
+        # Create PNG placeholder
+        # ----------------------------------------------------
+
+        image_bytes = create_review_image(
+            product_name=product_name,
+            rating=rating,
+            review_number=index
+        )
+
+        # ----------------------------------------------------
+        # Storage path
+        # ----------------------------------------------------
+
+        storage_path = (
+            f"{user_id}/"
+            f"{review_id}/"
+            f"1.png"
+        )
+
+        print(
+            f"Storage path: {storage_path}"
+        )
+
+        # ----------------------------------------------------
         # Upload to Supabase Storage
-        # ----------------------------------------
+        # ----------------------------------------------------
 
         try:
 
@@ -219,26 +442,34 @@ def main():
                 .from_(BUCKET) \
                 .upload(
                     storage_path,
-                    svg_bytes,
+                    image_bytes,
                     {
-                        "content-type": "image/svg+xml",
-                        "upsert": "true",
+                        "content-type":
+                            "image/png",
+                        "upsert":
+                            "true",
                     }
                 )
 
         except Exception as e:
 
-            # If file already exists, try update
+            print(
+                f"  ⚠️ Upload failed, "
+                f"trying update: {e}"
+            )
+
             try:
 
                 supabase.storage \
                     .from_(BUCKET) \
                     .update(
                         storage_path,
-                        svg_bytes,
+                        image_bytes,
                         {
-                            "content-type": "image/svg+xml",
-                            "upsert": "true",
+                            "content-type":
+                                "image/png",
+                            "upsert":
+                                "true",
                         }
                     )
 
@@ -251,43 +482,55 @@ def main():
 
                 continue
 
-        # ----------------------------------------
-        # Delete existing product image records
-        # ----------------------------------------
+        # ----------------------------------------------------
+        # Public URL
+        # ----------------------------------------------------
+
+        public_url = get_public_url(
+            storage_path
+        )
+
+        # ----------------------------------------------------
+        # Remove existing DB record
+        # ----------------------------------------------------
 
         try:
 
             (
                 supabase
-                .table("product_images")
+                .table("review_images")
                 .delete()
-                .eq("product_id", product_id)
+                .eq(
+                    "review_id",
+                    review_id
+                )
+                .eq(
+                    "display_order",
+                    1
+                )
                 .execute()
             )
 
         except Exception as e:
 
             print(
-                f"  ⚠️ Could not delete old image "
-                f"records: {e}"
+                f"  ⚠️ Could not delete "
+                f"old image record: {e}"
             )
 
-        # ----------------------------------------
-        # Insert image record
-        #
-        # IMPORTANT:
-        # Store STORAGE PATH, not public URL.
-        # ----------------------------------------
+        # ----------------------------------------------------
+        # Insert database record
+        # ----------------------------------------------------
 
         try:
 
             (
                 supabase
-                .table("product_images")
+                .table("review_images")
                 .insert({
-                    "product_id": product_id,
-                    "image_url": storage_path,
-                    "alt_text": product_name,
+                    "review_id": review_id,
+                    "image_path": storage_path,
+                    "image_url": public_url,
                     "display_order": 1,
                 })
                 .execute()
@@ -296,27 +539,60 @@ def main():
         except Exception as e:
 
             print(
-                f"  ❌ Database insert failed: {e}"
+                f"  ❌ Database insert failed: "
+                f"{e}"
             )
+
+            # ------------------------------------------------
+            # Remove uploaded file
+            # ------------------------------------------------
+
+            try:
+
+                supabase.storage \
+                    .from_(BUCKET) \
+                    .remove([
+                        storage_path
+                    ])
+
+            except Exception:
+                pass
 
             continue
 
         print(
-            f"  ✅ Uploaded: {storage_path}"
+            f"  ✅ Uploaded: "
+            f"{storage_path}"
         )
 
         print(
-            f"  🔗 {get_public_url(storage_path)}"
+            f"  🔗 {public_url}"
         )
 
         success += 1
 
-    print("\n================================")
-    print("IMAGE SEEDING COMPLETE")
-    print("================================")
-    print(f"Products processed: {len(products)}")
-    print(f"Successful: {success}")
+    # ========================================================
+    # SUMMARY
+    # ========================================================
 
+    print("\n================================")
+    print("REVIEW IMAGE SEEDING COMPLETE")
+    print("================================")
+
+    print(
+        f"Reviews processed: "
+        f"{len(reviews)}"
+    )
+
+    print(
+        f"Successful: "
+        f"{success}"
+    )
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
     main()

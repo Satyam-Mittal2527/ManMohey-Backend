@@ -87,6 +87,171 @@ def _get_availability_product_ids(valid_ids, parsed_filters, matching_product_id
     return set(candidate_ids), in_stock_ids
 
 
+def _build_review_summary(reviews: list[dict]) -> dict:
+    distribution = {"5": 0, "4": 0, "3": 0, "2": 0, "1": 0}
+    total_rating = 0
+
+    for review in reviews:
+        rating_value = int(review.get("rating") or 0)
+        if 1 <= rating_value <= 5:
+            distribution[str(rating_value)] = distribution.get(str(rating_value), 0) + 1
+            total_rating += rating_value
+
+    total_reviews = len(reviews)
+    average_rating = round(total_rating / total_reviews, 1) if total_reviews else 0.0
+
+    return {
+        "average_rating": average_rating,
+        "total_reviews": total_reviews,
+        "rating_distribution": distribution,
+    }
+
+
+def _resolve_product_id(product_identifier: str | int | None) -> int | None:
+    if product_identifier is None:
+        return None
+
+    try:
+        return int(product_identifier)
+    except (TypeError, ValueError):
+        pass
+
+    value = str(product_identifier).strip()
+    if not value:
+        return None
+
+    try:
+        result = (
+            supabase_admin
+            .table("products")
+            .select("id")
+            .eq("slug", value)
+            .single()
+            .execute()
+        )
+        data = result.data or {}
+
+        if isinstance(data, list):
+            if not data:
+                return None
+            record = data[0]
+        elif isinstance(data, dict):
+            record = data
+        else:
+            return None
+
+        product_id = record.get("id") if isinstance(record, dict) else None
+        if product_id is None:
+            return None
+        return int(product_id)
+    except Exception:
+        return None
+
+
+def get_product_reviews_service(product_identifier: str | int | None, page: int = 1, limit: int = 10):
+    try:
+        product_id = _resolve_product_id(product_identifier)
+        if product_id is None:
+            return {"reviews": [], "summary": _build_review_summary([])}
+
+        page = max(1, int(page))
+        limit = min(50, max(1, int(limit)))
+        offset = (page - 1) * limit
+
+        reviews_response = (
+            supabase_admin
+            .table("reviews")
+            .select("id, product_id, user_id, rating, comment, is_verified_purchase, is_approved, created_at")
+            .eq("product_id", product_id)
+            .eq("is_approved", True)
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        reviews = sorted(
+            reviews_response.data or [],
+            key=lambda item: item.get("created_at") or "",
+            reverse=True,
+        )
+        if not reviews:
+            return {"reviews": [], "summary": _build_review_summary([])}
+
+        visible_reviews = reviews[offset: offset + limit]
+        review_ids = [review["id"] for review in visible_reviews if review.get("id")]
+
+        images_response = {"data": []}
+        if review_ids:
+            images_response = (
+                supabase_admin
+                .table("review_images")
+                .select("id, review_id, image_url, display_order")
+                .in_("review_id", review_ids)
+                .order("display_order")
+                .execute()
+            )
+
+        images_by_review: dict[str, list[dict]] = {}
+        for image in images_response.data or []:
+            review_id = image.get("review_id")
+            if review_id is None:
+                continue
+            images_by_review.setdefault(str(review_id), []).append({
+                "id": image.get("id"),
+                "image_url": image.get("image_url"),
+                "display_order": image.get("display_order", 1),
+            })
+
+        user_ids = list({review["user_id"] for review in reviews if review.get("user_id")})
+        profile_map: dict[str, dict] = {}
+        if user_ids:
+            profiles_response = (
+                supabase_admin
+                .table("profiles")
+                .select("id, first_name, last_name")
+                .in_("id", user_ids)
+                .execute()
+            )
+            for profile in profiles_response.data or []:
+                profile_map[str(profile.get("id"))] = profile
+
+        formatted_reviews = []
+        for review in visible_reviews:
+            user_id = str(review.get("user_id") or "")
+            profile = profile_map.get(user_id, {})
+            first_name = profile.get("first_name") or ""
+            last_name = profile.get("last_name") or ""
+            display_name = " ".join(part for part in [first_name, last_name] if part).strip() or "Customer"
+
+            review_images = sorted(
+                images_by_review.get(str(review.get("id")), []),
+                key=lambda item: item.get("display_order", 1) or 1,
+            )
+
+            formatted_reviews.append({
+                "id": review.get("id"),
+                "product_id": review.get("product_id"),
+                "user_id": review.get("user_id"),
+                "rating": int(review.get("rating") or 0),
+                "comment": review.get("comment") or "",
+                "is_verified_purchase": bool(review.get("is_verified_purchase")),
+                "created_at": review.get("created_at"),
+                "user": {
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "display_name": display_name,
+                },
+                "images": review_images,
+            })
+
+        return {
+            "reviews": formatted_reviews,
+            "summary": _build_review_summary(reviews),
+        }
+    except Exception as exc:
+        print(f"Exception in get_product_reviews_service: {exc}")
+        return {"reviews": [], "summary": _build_review_summary([])}
+
+
 def getCollectionPage_service(
     category_slug: str,
     selected_filters: dict | None = None,

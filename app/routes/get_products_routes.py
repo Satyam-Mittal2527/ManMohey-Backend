@@ -60,6 +60,18 @@ async def get_product_by_slug(product_slug: str):
     return {"product": product}
 
 
+@router.get("/product/{product_slug}/reviews")
+async def get_product_reviews(product_slug: str, page: int = Query(default=1, ge=1), limit: int = Query(default=10, ge=1, le=50)):
+    result = getCollectionPage_service.get_product_reviews_service(product_slug, page=page, limit=limit)
+    return result or {"reviews": [], "summary": {"average_rating": 0.0, "total_reviews": 0, "rating_distribution": {"5": 0, "4": 0, "3": 0, "2": 0, "1": 0}}}
+
+
+@router.get("/{product_id}/reviews")
+async def get_product_reviews_by_id(product_id: str, page: int = Query(default=1, ge=1), limit: int = Query(default=10, ge=1, le=50)):
+    result = getCollectionPage_service.get_product_reviews_service(product_id, page=page, limit=limit)
+    return result or {"reviews": [], "summary": {"average_rating": 0.0, "total_reviews": 0, "rating_distribution": {"5": 0, "4": 0, "3": 0, "2": 0, "1": 0}}}
+
+
 @router.get("/{collection_slug}")
 async def get_collection(
     collection_slug: str,
