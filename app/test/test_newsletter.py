@@ -25,7 +25,7 @@ def test_empty_and_invalid_email_are_rejected_before_service_call(monkeypatch):
     assert client.post("/api/newsletter/subscribe", json={}).status_code == 422
 
 
-def test_valid_email_returns_double_opt_in_message(monkeypatch):
+def test_valid_email_returns_subscription_welcome_message(monkeypatch):
     async def accepted(email):
         assert email == "customer@example.com"
         return True
@@ -39,10 +39,7 @@ def test_valid_email_returns_double_opt_in_message(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "success": True,
-        "message": (
-            "Subscription request received. Please check your inbox to confirm "
-            "your subscription."
-        ),
+        "message": "You’re subscribed! Welcome to the ManMohey newsletter.",
     }
 
 
@@ -69,6 +66,12 @@ def test_klaviyo_request_contains_subscription_and_private_headers(monkeypatch):
 
     class AcceptedResponse:
         status_code = 202
+        headers = {}
+        text = ""
+
+        @staticmethod
+        def json():
+            raise ValueError("empty response body")
 
     class FakeAsyncClient:
         def __init__(self, timeout, follow_redirects):
@@ -110,6 +113,60 @@ def test_klaviyo_request_contains_subscription_and_private_headers(monkeypatch):
         "id": "XyrkBT",
     }
     assert payload["attributes"]["custom_source"] == "ManMohey Website Newsletter Signup"
+
+
+def test_202_job_metadata_is_logged_without_authorization(monkeypatch, caplog):
+    caplog.set_level("INFO", logger="app.services.newsletter_service")
+    monkeypatch.setattr(newsletter_service.settings, "KLAVIYO_PRIVATE_API_KEY", "do-not-log-this-key")
+    monkeypatch.setattr(newsletter_service.settings, "KLAVIYO_NEWSLETTER_LIST_ID", "XyrkBT")
+    monkeypatch.setattr(newsletter_service.settings, "KLAVIYO_API_REVISION", "2026-07-15")
+
+    class AcceptedResponse:
+        status_code = 202
+        headers = {
+            "location": "https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs/job-123/",
+            "x-klaviyo-request-id": "request-456",
+            "authorization": "must-not-be-logged",
+        }
+
+        @staticmethod
+        def json():
+            return {
+                "data": {
+                    "id": "job-123",
+                    "attributes": {"status": "failed"},
+                },
+                "errors": [
+                    {"code": "profile_error", "title": "Profile error", "detail": "Subscription failed"}
+                ],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return AcceptedResponse()
+
+    monkeypatch.setattr(newsletter_service.httpx, "AsyncClient", FakeAsyncClient)
+
+    assert asyncio.run(
+        newsletter_service.subscribe_to_newsletter("customer@example.com")
+    ) is True
+    assert "status=202" in caplog.text
+    assert "job-123" in caplog.text
+    assert "failed" in caplog.text
+    assert "profile_error" in caplog.text
+    assert "Subscription failed" in caplog.text
+    assert "request-456" in caplog.text
+    assert "do-not-log-this-key" not in caplog.text
+    assert "must-not-be-logged" not in caplog.text
 
 
 def test_klaviyo_duplicate_is_treated_as_already_subscribed(monkeypatch):

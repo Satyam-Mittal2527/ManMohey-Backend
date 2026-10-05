@@ -49,8 +49,5 @@ async def subscribe(payload: NewsletterSubscribeRequest):
 
     return {
         "success": True,
-        "message": (
-            "Subscription request received. Please check your inbox to confirm "
-            "your subscription."
-        ),
+        "message": "You’re subscribed! Welcome to the ManMohey newsletter.",
     }
