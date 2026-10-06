@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 from app.db.supabase_client import supabase, supabase_admin
 from app.services.filter_service import (
@@ -146,6 +147,214 @@ def _resolve_product_id(product_identifier: str | int | None) -> int | None:
         return int(product_id)
     except Exception:
         return None
+
+
+def _is_verified_purchase_for_product(user_id: str, product_id: int) -> tuple[bool, int | None]:
+    try:
+        orders_response = (
+            supabase_admin
+            .table("orders")
+            .select("id")
+            .eq("user_id", user_id)
+            .in_("status", ["PENDING", "PAID", "PROCESSING", "SHIPPED", "DELIVERED", "COMPLETED"])
+            .execute()
+        )
+        order_ids = [int(order["id"]) for order in (orders_response.data or []) if order.get("id") is not None]
+        if not order_ids:
+            return False, None
+
+        items_response = (
+            supabase_admin
+            .table("order_items")
+            .select("order_id, product_id")
+            .in_("order_id", order_ids)
+            .eq("product_id", product_id)
+            .limit(1)
+            .execute()
+        )
+        item = (items_response.data or [None])[0]
+        if item is None:
+            return False, None
+
+        return True, int(item.get("order_id"))
+    except Exception:
+        return False, None
+
+
+def create_product_review_service(
+    product_id: int | str,
+    user_id: str,
+    rating: int,
+    comment: str,
+    image_files: list[Any] | None = None,
+):
+    if not user_id:
+        raise ValueError("Authentication required.")
+
+    try:
+        product_id_int = int(product_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid product.") from exc
+
+    if not 1 <= int(rating) <= 5:
+        raise ValueError("Please select a valid rating from 1 to 5 stars.")
+
+    cleaned_comment = (comment or "").strip()
+    if not cleaned_comment:
+        raise ValueError("Review comment is required.")
+    if len(cleaned_comment) > 2000:
+        raise ValueError("Review comment must be 2000 characters or fewer.")
+
+    product_response = (
+        supabase_admin
+        .table("products")
+        .select("id")
+        .eq("id", product_id_int)
+        .limit(1)
+        .execute()
+    )
+    if not product_response.data:
+        raise ValueError("Product not found.")
+
+    existing_review = (
+        supabase_admin
+        .table("reviews")
+        .select("id")
+        .eq("product_id", product_id_int)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if existing_review.data:
+        raise ValueError("You have already reviewed this product.")
+
+    verified_purchase, verified_order_id = _is_verified_purchase_for_product(user_id, product_id_int)
+
+    review_payload = {
+        "product_id": product_id_int,
+        "user_id": user_id,
+        "rating": int(rating),
+        "comment": cleaned_comment,
+        "order_id": verified_order_id,
+        "is_verified_purchase": verified_purchase,
+        "is_approved": True,
+    }
+
+    review_response = supabase_admin.table("reviews").insert(review_payload).execute()
+    if not review_response.data:
+        raise ValueError("Failed to create review.")
+
+    review = review_response.data[0]
+    review_id = review.get("id")
+    uploaded_paths = []
+    uploaded_record_ids = []
+    uploaded_image_records = []
+
+    try:
+        for image_index, image_file in enumerate((image_files or [])[:5], start=1):
+            if image_file is None:
+                continue
+
+            uploaded = getattr(image_file, "file", None)
+            if uploaded is None:
+                raise ValueError("Invalid review image.")
+
+            original_name = getattr(image_file, "filename", "") or f"image-{image_index}"
+            extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else "jpg"
+            allowed_extensions = {"jpg", "jpeg", "png", "webp"}
+            if extension not in allowed_extensions:
+                raise ValueError("Only JPG, PNG, and WebP images are allowed.")
+
+            file_bytes = uploaded.read()
+            if not file_bytes:
+                raise ValueError("Review image is empty.")
+            if len(file_bytes) > 5 * 1024 * 1024:
+                raise ValueError("Each review image must be 5 MB or smaller.")
+
+            content_type = getattr(image_file, "content_type", None) or {
+                "jpg": "image/jpeg",
+                "jpeg": "image/jpeg",
+                "png": "image/png",
+                "webp": "image/webp",
+            }.get(extension, "image/jpeg")
+
+            storage_path = f"{user_id}/{review_id}/{image_index}.{extension}"
+            upload_response = (
+                supabase_admin
+                .storage
+                .from_("review-images")
+                .upload(storage_path, file_bytes, {"content-type": content_type, "upsert": "false"})
+            )
+            if getattr(upload_response, "error", None):
+                raise ValueError("Review image upload failed.")
+
+            image_url = (
+                supabase_admin
+                .storage
+                .from_("review-images")
+                .get_public_url(storage_path)
+            )
+
+            image_result = (
+                supabase_admin
+                .table("review_images")
+                .insert({
+                    "review_id": review_id,
+                    "image_path": storage_path,
+                    "image_url": image_url,
+                    "display_order": image_index,
+                })
+                .execute()
+            )
+            if image_result.data:
+                image_record = image_result.data[0]
+                uploaded_record_ids.append(image_record.get("id"))
+                uploaded_image_records.append({
+                    "id": image_record.get("id"),
+                    "path": storage_path,
+                    "display_order": image_index,
+                })
+            uploaded_paths.append(storage_path)
+    except Exception:
+        for storage_path in uploaded_paths:
+            try:
+                supabase_admin.storage.from_("review-images").remove([storage_path])
+            except Exception:
+                pass
+        for image_id in uploaded_record_ids:
+            try:
+                supabase_admin.table("review_images").delete().eq("id", image_id).execute()
+            except Exception:
+                pass
+        try:
+            supabase_admin.table("reviews").delete().eq("id", review_id).execute()
+        except Exception:
+            pass
+        raise
+
+    return {
+        "id": review_id,
+        "product_id": product_id_int,
+        "user_id": user_id,
+        "rating": int(rating),
+        "comment": cleaned_comment,
+        "is_verified_purchase": verified_purchase,
+        "is_approved": True,
+        "created_at": review.get("created_at"),
+        "images": [
+            {
+                "id": image_record.get("id"),
+                "image_url": (
+                    supabase_admin
+                    .storage
+                    .from_("review-images")
+                    .get_public_url(image_record["path"])
+                ) if image_record.get("path") else None,
+                "display_order": image_record.get("display_order", idx),
+            }
+            for idx, image_record in enumerate(uploaded_image_records, start=1)
+        ],
+    }
 
 
 def get_product_reviews_service(product_identifier: str | int | None, page: int = 1, limit: int = 10):

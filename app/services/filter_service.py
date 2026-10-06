@@ -184,8 +184,25 @@ def get_category_filters(category_id: int):
     )
 
     options_by_group = defaultdict(list)
+    seen_option_ids: set[int] = set()
 
-    for row in category_options.data:
+    def add_option(option: dict):
+        option_id = int(option["id"])
+        if option_id in seen_option_ids:
+            return
+        seen_option_ids.add(option_id)
+
+        group_id = option["group_id"]
+        options_by_group[group_id].append({
+            "id": option_id,
+            "name": option["name"],
+            "slug": option["slug"],
+            "hex_code": option.get("hex_code"),
+            "value": option.get("value"),
+            "display_order": option.get("display_order", 0),
+        })
+
+    for row in category_options.data or []:
         option = row.get("filter_options")
         if option is None:
             continue
@@ -194,14 +211,48 @@ def get_category_filters(category_id: int):
             option["name"] = "Cotton"
             option["slug"] = "cotton"
 
-        options_by_group[option["group_id"]].append({
-            "id": option["id"],
-            "name": option["name"],
-            "slug": option["slug"],
-            "hex_code": option.get("hex_code"),
-            "value": option.get("value"),
-            "display_order": option["display_order"],
+        add_option(option)
+
+    product_ids_response = (
+        supabase_admin
+        .table("products")
+        .select("id")
+        .eq("active", True)
+        .eq("category_id", category_id)
+        .execute()
+    )
+    product_ids = {int(row["id"]) for row in (product_ids_response.data or []) if row.get("id") is not None}
+
+    if product_ids:
+        filter_values_response = (
+            supabase_admin
+            .table("product_filter_values")
+            .select("filter_option_id")
+            .in_("product_id", sorted(product_ids))
+            .execute()
+        )
+        filter_option_ids = sorted({
+            int(row["filter_option_id"]) for row in (filter_values_response.data or []) if row.get("filter_option_id") is not None
         })
+
+        if filter_option_ids:
+            fallback_options_response = (
+                supabase_admin
+                .table("filter_options")
+                .select("id, group_id, name, slug, hex_code, value, display_order")
+                .in_("id", filter_option_ids)
+                .execute()
+            )
+            for row in fallback_options_response.data or []:
+                add_option({
+                    "id": row["id"],
+                    "group_id": row["group_id"],
+                    "name": row["name"],
+                    "slug": row["slug"],
+                    "hex_code": row.get("hex_code"),
+                    "value": row.get("value"),
+                    "display_order": row.get("display_order", 0),
+                })
 
     all_option_ids = [
         option["id"]
@@ -223,9 +274,12 @@ def get_category_filters(category_id: int):
             continue
 
         options = sorted(
-            options_by_group[group["id"]],
+            options_by_group.get(group["id"], []),
             key=lambda option: option["display_order"],
         )
+
+        if not options:
+            continue
 
         for option in options:
             option["count"] = option_counts.get(option["id"], 0)

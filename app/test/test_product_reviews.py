@@ -1,4 +1,5 @@
-from app.services.getCollectionPage_service import _resolve_product_id, get_product_reviews_service
+from app.db.supabase_client import supabase_admin
+from app.services.getCollectionPage_service import _resolve_product_id, create_product_review_service, get_product_reviews_service
 
 
 def test_resolve_product_id_handles_single_row_dict_result(monkeypatch):
@@ -135,3 +136,220 @@ def test_get_product_reviews_service_builds_summary_and_images(monkeypatch):
     assert result["summary"]["rating_distribution"]["4"] == 1
     assert result["reviews"][0]["user"]["first_name"] == "Satyam"
     assert result["reviews"][0]["images"][0]["image_url"] == "https://cdn.example.com/r1.png"
+
+
+def test_create_product_review_service_rejects_duplicate_review(monkeypatch):
+    class FakeResponse:
+        def __init__(self, data=None):
+            self.data = data or []
+
+    class FakeReviewTable:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([{"id": "existing-review"}])
+
+    class FakeProductTable:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([{"id": 13}])
+
+    class FakeOrdersTable:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def in_(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([])
+
+    class FakeOrderItemsTable:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def in_(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([])
+
+    def fake_table(name):
+        if name == "products":
+            return FakeProductTable()
+        if name == "reviews":
+            return FakeReviewTable()
+        if name == "orders":
+            return FakeOrdersTable()
+        if name == "order_items":
+            return FakeOrderItemsTable()
+        raise AssertionError(f"unexpected table: {name}")
+
+    monkeypatch.setattr("app.services.getCollectionPage_service.supabase_admin.table", fake_table)
+
+    try:
+        create_product_review_service(13, "user-1", 5, "Nice product")
+        assert False, "Duplicate review should raise ValueError"
+    except ValueError as exc:
+        assert "already reviewed" in str(exc).lower()
+
+
+def test_create_product_review_service_uploads_images_and_persists_review(monkeypatch):
+    class FakeResponse:
+        def __init__(self, data=None):
+            self.data = data or []
+
+    class FakeProductTable:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([{"id": 13}])
+
+    class FakeReviewTable:
+        def __init__(self):
+            self.inserted = []
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def insert(self, payload):
+            self.inserted.append(payload)
+            return self
+
+        def delete(self):
+            return self
+
+        def execute(self):
+            if self.inserted:
+                payload = self.inserted.pop(0)
+                return FakeResponse([{**payload, "id": "new-review-id", "created_at": "2026-10-06T00:00:00+00:00"}])
+            return FakeResponse([])
+
+    class FakeImageTable:
+        def insert(self, payload):
+            return self
+
+        def delete(self):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([{"id": "image-1", "review_id": "new-review-id"}])
+
+    class FakeOrdersTable:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def in_(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([{"id": 1001}])
+
+    class FakeOrderItemsTable:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def in_(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([{"order_id": 1001, "product_id": 13}])
+
+    class FakeStorageBucket:
+        def __init__(self):
+            self.uploaded = []
+
+        def upload(self, path, payload, options=None):
+            self.uploaded.append((path, payload, options))
+            return type("Resp", (), {"error": None})()
+
+        def get_public_url(self, path):
+            return f"https://cdn.example.com/{path}"
+
+        def remove(self, paths):
+            return {"data": []}
+
+    fake_storage_bucket = FakeStorageBucket()
+
+    class FakeStorage:
+        def from_(self, bucket_name):
+            if bucket_name == "review-images":
+                return fake_storage_bucket
+            raise AssertionError(f"unexpected bucket: {bucket_name}")
+
+    def fake_table(name):
+        if name == "products":
+            return FakeProductTable()
+        if name == "reviews":
+            return FakeReviewTable()
+        if name == "orders":
+            return FakeOrdersTable()
+        if name == "order_items":
+            return FakeOrderItemsTable()
+        if name == "review_images":
+            return FakeImageTable()
+        raise AssertionError(f"unexpected table: {name}")
+
+    class FakeImageFile:
+        def __init__(self):
+            self.filename = "sample.png"
+            self.content_type = "image/png"
+            self.file = type("F", (), {"read": lambda self: b"PNGDATA"})()
+
+    monkeypatch.setattr("app.services.getCollectionPage_service.supabase_admin.table", fake_table)
+    monkeypatch.setattr(type(supabase_admin), "storage", property(lambda _self: FakeStorage()), raising=False)
+
+    result = create_product_review_service(13, "user-1", 5, "Great product!", [FakeImageFile()])
+
+    assert result["rating"] == 5
+    assert result["images"][0]["image_url"].startswith("https://cdn.example.com/")
+    assert fake_storage_bucket.uploaded

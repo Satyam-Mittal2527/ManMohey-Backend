@@ -1,3 +1,4 @@
+from app.services import filter_service
 from app.services import getCollectionPage_service as collection_service
 
 
@@ -89,3 +90,88 @@ def test_collection_service_ranges_after_filters_and_returns_pagination(monkeypa
     )
     assert product_calls[range_index] == ("range", 20, 39)
     assert price_filter_index < range_index
+
+
+def test_get_category_filters_falls_back_to_product_filter_values(monkeypatch):
+    class FakeGroupsQuery:
+        def __init__(self):
+            self.data = [{"id": 7, "key": "brand", "name": "Brand", "type": "checkbox", "active": True, "display_order": 1}]
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse(self.data)
+
+    class FakeCategoryOptionsQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([])
+
+    class FakeProductIdsQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([{"id": 22}, {"id": 23}])
+
+    class FakeProductFilterValuesQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def in_(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([
+                {"product_id": 22, "filter_option_id": 100},
+                {"product_id": 23, "filter_option_id": 100},
+                {"product_id": 23, "filter_option_id": 101},
+            ])
+
+    class FakeFilterOptionsQuery:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def in_(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            return FakeResponse([
+                {"id": 100, "group_id": 7, "name": "Aurelia", "slug": "aurelia", "hex_code": None, "value": None, "display_order": 1},
+                {"id": 101, "group_id": 7, "name": "Mira", "slug": "mira", "hex_code": None, "value": None, "display_order": 2},
+            ])
+
+    def fake_table(name):
+        if name == "filter_groups":
+            return FakeGroupsQuery()
+        if name == "category_filter_options":
+            return FakeCategoryOptionsQuery()
+        if name == "products":
+            return FakeProductIdsQuery()
+        if name == "product_filter_values":
+            return FakeProductFilterValuesQuery()
+        if name == "filter_options":
+            return FakeFilterOptionsQuery()
+        raise AssertionError(name)
+
+    monkeypatch.setattr(filter_service, "supabase_admin", type("FakeSupabaseAdmin", (), {"table": staticmethod(fake_table)})())
+
+    filters = filter_service.get_category_filters(998)
+
+    assert filters["brand"]["displayName"] == "Brand"
+    assert {option["name"] for option in filters["brand"]["options"]} == {"Aurelia", "Mira"}

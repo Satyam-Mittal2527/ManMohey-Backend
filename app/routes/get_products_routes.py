@@ -1,7 +1,10 @@
 import os
-from fastapi import APIRouter, Query, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 
 import app.services.getCollectionPage_service as getCollectionPage_service
+from app.dependencies.auth import get_current_user
 
 router = APIRouter(prefix="/api/Products")
 
@@ -70,6 +73,37 @@ async def get_product_reviews(product_slug: str, page: int = Query(default=1, ge
 async def get_product_reviews_by_id(product_id: str, page: int = Query(default=1, ge=1), limit: int = Query(default=10, ge=1, le=50)):
     result = getCollectionPage_service.get_product_reviews_service(product_id, page=page, limit=limit)
     return result or {"reviews": [], "summary": {"average_rating": 0.0, "total_reviews": 0, "rating_distribution": {"5": 0, "4": 0, "3": 0, "2": 0, "1": 0}}}
+
+
+@router.post("/{product_id}/reviews")
+async def create_product_review(
+    product_id: int,
+    rating: Annotated[int, Form(...)],
+    comment: Annotated[str, Form(...)],
+    images: list[UploadFile] = File(default_factory=list),
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    try:
+        review = getCollectionPage_service.create_product_review_service(
+            product_id=product_id,
+            user_id=str(user_id),
+            rating=rating,
+            comment=comment,
+            image_files=images,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == "You have already reviewed this product.":
+            raise HTTPException(status_code=409, detail=message) from exc
+        if message == "Product not found.":
+            raise HTTPException(status_code=404, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    return {"message": "Review created successfully.", "review": review}
 
 
 @router.get("/{collection_slug}")
