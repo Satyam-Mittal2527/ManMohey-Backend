@@ -7,3 +7,4 @@ pydantic-settings
 email-validator
 razorpay
 httpx
+python-multipart
