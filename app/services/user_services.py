@@ -22,15 +22,18 @@ def register_user(user: UserCreate):
             }
         })
     except Exception as e:
-        error_message = str(e).lower()
+        error_message = str(e).strip() or "Registration could not be completed."
 
-        if "already" in error_message:
-                raise HTTPException(status_code=409, detail="Email already exists")
+        if "already" in error_message.lower():
+            raise HTTPException(status_code=409, detail="Email already exists")
 
-        raise HTTPException(status_code=400, detail="Failed to register user")
+        raise HTTPException(status_code=400, detail=f"Failed to register user Error: {error_message}")
 
     if response.user is None:
-            raise HTTPException(status_code=400, detail="Failed to register user")
+        raise HTTPException(
+            status_code=400,
+            detail="Registration could not be completed. Please check your details and try again.",
+        )
         
     user_id = response.user.id
     print("User registered with ID:", user_id)
